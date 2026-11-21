@@ -433,7 +433,7 @@ with tab2:
             for i, subj in enumerate(SUBJECTS):
                 with cols[i % 3]:
                     marks_input[subj] = float(
-                        st.number_input(subj, min_value=0.0, max_value=100.0, value=55.0, step=1.0, key=f"m_{subj}")
+                        st.number_input(subj, min_value=0.0, max_value=100.0, value=0.0, step=1.0, key=f"m_{subj}")
                     )
 
             if st.form_submit_button("Save Exam Marks"):
