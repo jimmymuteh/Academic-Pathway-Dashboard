@@ -233,9 +233,11 @@ def build_results_table(data: pd.DataFrame, unit_label: str) -> pd.DataFrame:
             piv["Total KNEC Pts"] = pts_map[pts_cols].sum(axis=1).reindex(piv_idx).fillna(0).astype(int).values
         avg_pct_s = data.groupby(idx_cols)["pct"].mean().reindex(piv_idx).fillna(0)
         piv["KNEC Level"] = [knec_grade(float(v))[0] for v in avg_pct_s.values]
-        piv["Class Pos"] = piv.groupby(["grade", "term", "exam"])[col_m].rank(ascending=False, method="min").astype(int)
-        piv["Stream Pos"] = piv.groupby(["grade", "stream", "term", "exam"])[col_m].rank(ascending=False, method="min").astype(int)
-        piv = piv.sort_values(by=["grade", "stream", "Class Pos"])
+        piv["Grade Rank"] = piv.groupby(["grade", "term", "exam"])[col_m].rank(ascending=False, method="min").astype(int)
+        piv["Stream Rank"] = piv.groupby(["grade", "stream", "term", "exam"])[col_m].rank(ascending=False, method="min").astype(int)
+        piv = piv.sort_values(by=["grade", "term", "exam", "Grade Rank", col_m], ascending=[True, True, True, True, False])
+        front = ["Grade Rank", "Stream Rank", "admission_no", "student_name", "grade", "stream"]
+        piv = piv[front + [c for c in piv.columns if c not in front]]
     return piv
 
 
@@ -293,7 +295,7 @@ with tab1:
         st.markdown("### Stream Performance Ranking")
         st.dataframe(build_rankings(filtered, unit_label), use_container_width=True)
 
-        st.markdown("### Backend Block & Stream Downloads (e.g. Whole Grade 8 + 8A, 8B, 8C)")
+        st.markdown("### Whole-Grade Ranking (Best to Worst) & Stream Downloads")
         default_block = selected_grade if selected_grade in GRADES else "Grade 8"
         chosen_block = st.selectbox("Select Block / Grade for Backend Export", GRADES, index=GRADES.index(default_block))
         block_base = df[df["grade"] == chosen_block]
@@ -305,6 +307,10 @@ with tab1:
         block_table = build_results_table(block_base, unit_label)
         slug = chosen_block.lower().replace(" ", "_")
         if not block_table.empty:
+            rank_cols = [c for c in ["Grade Rank", "Stream Rank", "admission_no", "student_name", "stream", f"Mean ({unit_label})", "Total KNEC Pts", "KNEC Level"] if c in block_table.columns]
+            st.markdown(f"#### {chosen_block} Whole-Grade Ranking (1st / Best to Last)")
+            st.dataframe(block_table[rank_cols], use_container_width=True)
+            st.markdown(f"#### Full {chosen_block} Subject Breakdown")
             st.dataframe(block_table, use_container_width=True)
             st.download_button(f"Download Whole {chosen_block} (CSV)", block_table.to_csv(index=False).encode("utf-8"), f"rwangondu_{slug}_whole.csv", "text/csv")
             s_cols = st.columns(len(STREAMS))
