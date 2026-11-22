@@ -207,7 +207,7 @@ def parse_bulk_marks(mdf: pd.DataFrame, lookup: dict, default_max: float) -> Lis
     return rows
 
 
-# --- HIGHLIGHTED CLASS RANKING FUNCTION (e.g., Grade 8A vs 8B vs 8C by mean score) ---
+# --- HIGHLIGHTED CLASS RANKING FUNCTION ---
 def build_class_rankings(data: pd.DataFrame, unit_label: str) -> pd.DataFrame:
     col_m = f"Mean ({unit_label})"
     if data.empty:
@@ -302,11 +302,11 @@ with tab1:
         c1.image(make_chart(gs_piv, f"Mean ({unit_label}) by Whole Grade & Class", f"Mean ({unit_label})", xlim_val, "bar_pivot"))
         c2.image(make_chart(filtered.groupby("subject")["display_score"].mean().sort_values(), f"Subject Performance ({unit_label})", f"Mean ({unit_label})", xlim_val, "barh"))
 
-        # --- HIGHLIGHTED CLASS COMPARISON (e.g., Grade 8A vs 8B vs 8C) ---
-        st.markdown("### Class Mean Score Ranking (Comparing A, B & C Within Each Whole Grade)")
+        # --- CLASS COMPARISON ---
+        st.markdown("### Class Mean Score Ranking")
         st.dataframe(build_class_rankings(filtered, unit_label), use_container_width=True)
 
-        st.markdown("### Whole-Grade Ranking (Best to Worst) & Class Downloads")
+        st.markdown("### Whole-Grade Ranking & Class Downloads")
         default_block = selected_grade if selected_grade in GRADES else "Grade 8"
         chosen_block = st.selectbox("Select Whole Grade for Backend Export", GRADES, index=GRADES.index(default_block))
         block_base = df[df["grade"] == chosen_block]
@@ -315,7 +315,7 @@ with tab1:
         if selected_exam != "All exams":
             block_base = block_base[block_base["exam"] == selected_exam]
 
-        st.markdown(f"#### {chosen_block} Classes Ranked by Mean Score (8A vs 8B vs 8C)")
+        st.markdown(f"#### {chosen_block} Classes Ranked by Mean Score")
         st.dataframe(build_class_rankings(block_base, unit_label), use_container_width=True)
 
         block_table = build_results_table(block_base, unit_label)
@@ -401,7 +401,7 @@ with tab2:
                 st.rerun()
 
 with tab3:
-    st.subheader("Learner Roster & Bulk CSV / Excel Upload")
+    st.subheader("Learner Register CSV / Excel Upload")
     st.dataframe(students_df, use_container_width=True)
     with st.form("add_student"):
         a1, a2, a3, a4, a5 = st.columns(5)
