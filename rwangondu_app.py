@@ -322,7 +322,7 @@ with tab1:
         slug = chosen_block.lower().replace(" ", "_")
         if not block_table.empty:
             rank_cols = [c for c in ["Grade Rank", "Class Rank", "admission_no", "student_name", "Class", f"Mean ({unit_label})", "Total KNEC Pts", "KNEC Level"] if c in block_table.columns]
-            st.markdown(f"#### Whole {chosen_block} Learner Ranking (1st / Best to Last)")
+            st.markdown(f"#### Whole {chosen_block} Learner Ranking")
             st.dataframe(block_table[rank_cols], use_container_width=True)
             st.markdown(f"#### Full {chosen_block} Subject Breakdown")
             st.dataframe(block_table, use_container_width=True)
