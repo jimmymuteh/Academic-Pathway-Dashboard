@@ -3,6 +3,7 @@ import os
 import sqlite3
 import urllib.parse
 import zipfile
+from datetime import datetime
 from typing import Dict, List, Optional
 
 import matplotlib.pyplot as plt
@@ -26,69 +27,50 @@ SUBJECTS = [
     "Mathematics", "English", "Kiswahili", "Integrated Science", "Social Studies",
     "Pre-Technical Studies", "Agriculture", "Creative Arts & Sports", "Religious Education",
 ]
+HUM_ARTS_SUBJS = ("English", "Kiswahili", "Social Studies", "Creative Arts & Sports", "Religious Education")
 
 st.set_page_config(page_title="Rwang'ondu School Dashboard", layout="wide")
 
 
 def knec_grade(pct: float) -> tuple[str, int, str]:
-    if pct >= 90:
-        return "EE1", 8, "Exceptional"
-    if pct >= 75:
-        return "EE2", 7, "Very Good"
-    if pct >= 58:
-        return "ME1", 6, "Good"
-    if pct >= 41:
-        return "ME2", 5, "Fair"
-    if pct >= 31:
-        return "AE1", 4, "Needs Improvement"
-    if pct >= 21:
-        return "AE2", 3, "Below Average"
-    if pct >= 11:
-        return "BE1", 2, "Well Below Average"
+    for cutoff, code, pts, label in [
+        (90, "EE1", 8, "Exceptional"), (75, "EE2", 7, "Very Good"), (58, "ME1", 6, "Good"),
+        (41, "ME2", 5, "Fair"), (31, "AE1", 4, "Needs Improvement"), (21, "AE2", 3, "Below Average"),
+        (11, "BE1", 2, "Well Below Average"), (0, "BE2", 1, "Minimal"),
+    ]:
+        if pct >= cutoff:
+            return code, pts, label
     return "BE2", 1, "Minimal"
 
 
 def init_db() -> None:
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS students (
-                admission_no TEXT PRIMARY KEY, student_name TEXT NOT NULL,
-                grade TEXT NOT NULL, stream TEXT NOT NULL, parent_whatsapp TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS marks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, term TEXT NOT NULL, exam TEXT NOT NULL,
-                grade TEXT NOT NULL, stream TEXT NOT NULL, admission_no TEXT NOT NULL,
-                subject TEXT NOT NULL, score REAL NOT NULL, max_marks REAL NOT NULL DEFAULT 100.0,
-                UNIQUE(term, exam, admission_no, subject),
-                FOREIGN KEY (admission_no) REFERENCES students(admission_no)
-            )
-            """
-        )
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(marks)").fetchall()]
-        if "max_marks" not in cols:
+        conn.execute("CREATE TABLE IF NOT EXISTS students (admission_no TEXT PRIMARY KEY, student_name TEXT NOT NULL, grade TEXT NOT NULL, stream TEXT NOT NULL, parent_whatsapp TEXT NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS marks (id INTEGER PRIMARY KEY AUTOINCREMENT, term TEXT NOT NULL, exam TEXT NOT NULL, grade TEXT NOT NULL, stream TEXT NOT NULL, admission_no TEXT NOT NULL, subject TEXT NOT NULL, score REAL NOT NULL, max_marks REAL NOT NULL DEFAULT 100.0, UNIQUE(term, exam, admission_no, subject), FOREIGN KEY (admission_no) REFERENCES students(admission_no))")
+        conn.execute("CREATE TABLE IF NOT EXISTS upload_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, uploaded_at TEXT NOT NULL, upload_type TEXT NOT NULL, source_name TEXT NOT NULL, rows_imported INTEGER NOT NULL, preview_json TEXT NOT NULL)")
+        if "max_marks" not in [r[1] for r in conn.execute("PRAGMA table_info(marks)").fetchall()]:
             conn.execute("ALTER TABLE marks ADD COLUMN max_marks REAL NOT NULL DEFAULT 100.0")
         if conn.execute("SELECT COUNT(*) FROM students").fetchone()[0] == 0:
             conn.executemany(
                 "INSERT OR IGNORE INTO students VALUES (?, ?, ?, ?, ?)",
                 [
-                    ("RWG-701", "Faith Wanjiku", "Grade 7", "A", "+254712000701"),
-                    ("RWG-702", "Brian Mwangi", "Grade 7", "A", "+254712000702"),
-                    ("RWG-703", "Mercy Otieno", "Grade 7", "B", "+254712000703"),
-                    ("RWG-704", "Kevin Kamau", "Grade 7", "C", "+254712000704"),
-                    ("RWG-801", "Sharon Njeri", "Grade 8", "A", "+254712000801"),
-                    ("RWG-802", "Dennis Ochieng", "Grade 8", "B", "+254712000802"),
-                    ("RWG-803", "Purity Wambui", "Grade 8", "C", "+254712000803"),
-                    ("RWG-901", "Ian Kiprop", "Grade 9", "A", "+254712000901"),
-                    ("RWG-902", "Esther Muthoni", "Grade 9", "A", "+254712000902"),
-                    ("RWG-903", "Collins Njoroge", "Grade 9", "B", "+254712000903"),
+                    ("RWG-701", "Faith Wanjiku", "Grade 7", "A", "+254712000701"), ("RWG-702", "Brian Mwangi", "Grade 7", "A", "+254712000702"),
+                    ("RWG-703", "Mercy Otieno", "Grade 7", "B", "+254712000703"), ("RWG-704", "Kevin Kamau", "Grade 7", "C", "+254712000704"),
+                    ("RWG-801", "Sharon Njeri", "Grade 8", "A", "+254712000801"), ("RWG-802", "Dennis Ochieng", "Grade 8", "B", "+254712000802"),
+                    ("RWG-803", "Purity Wambui", "Grade 8", "C", "+254712000803"), ("RWG-901", "Ian Kiprop", "Grade 9", "A", "+254712000901"),
+                    ("RWG-902", "Esther Muthoni", "Grade 9", "A", "+254712000902"), ("RWG-903", "Collins Njoroge", "Grade 9", "B", "+254712000903"),
                     ("RWG-904", "Naomi Mutua", "Grade 9", "C", "+254712000904"),
                 ],
             )
+        conn.commit()
+
+
+def log_upload(u_type: str, src_name: str, count: int, preview_df: pd.DataFrame) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO upload_logs (uploaded_at, upload_type, source_name, rows_imported, preview_json) VALUES (?, ?, ?, ?, ?)",
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), u_type, src_name, int(count), preview_df.head(50).to_json(orient="records") if not preview_df.empty else "[]"),
+        )
         conn.commit()
 
 
@@ -103,43 +85,25 @@ def load_students(refresh_token: int = 0) -> pd.DataFrame:
 def load_marks(refresh_token: int = 0) -> pd.DataFrame:
     _ = refresh_token
     with sqlite3.connect(DB_PATH) as conn:
-        return pd.read_sql_query(
-            """
-            SELECT m.id, m.term, m.exam, s.grade, s.stream, m.admission_no,
-                   s.student_name, s.parent_whatsapp, m.subject, m.score, m.max_marks
-            FROM marks m JOIN students s ON m.admission_no = s.admission_no
-            """,
-            conn,
-        )
+        return pd.read_sql_query("SELECT m.id, m.term, m.exam, s.grade, s.stream, m.admission_no, s.student_name, s.parent_whatsapp, m.subject, m.score, m.max_marks FROM marks m JOIN students s ON m.admission_no = s.admission_no", conn)
+
+
+@st.cache_data
+def load_logs(refresh_token: int = 0) -> pd.DataFrame:
+    _ = refresh_token
+    with sqlite3.connect(DB_PATH) as conn:
+        return pd.read_sql_query("SELECT * FROM upload_logs ORDER BY id DESC", conn)
 
 
 def upsert_students(rows: List[tuple]) -> None:
     with sqlite3.connect(DB_PATH) as conn:
-        conn.executemany(
-            """
-            INSERT INTO students (admission_no, student_name, grade, stream, parent_whatsapp)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(admission_no) DO UPDATE SET
-                student_name=excluded.student_name, grade=excluded.grade,
-                stream=excluded.stream, parent_whatsapp=excluded.parent_whatsapp
-            """,
-            rows,
-        )
+        conn.executemany("INSERT INTO students (admission_no, student_name, grade, stream, parent_whatsapp) VALUES (?, ?, ?, ?, ?) ON CONFLICT(admission_no) DO UPDATE SET student_name=excluded.student_name, grade=excluded.grade, stream=excluded.stream, parent_whatsapp=excluded.parent_whatsapp", rows)
         conn.commit()
 
 
 def upsert_marks(rows: List[tuple]) -> None:
     with sqlite3.connect(DB_PATH) as conn:
-        conn.executemany(
-            """
-            INSERT INTO marks (term, exam, grade, stream, admission_no, subject, score, max_marks)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(term, exam, admission_no, subject) DO UPDATE SET
-                grade=excluded.grade, stream=excluded.stream,
-                score=excluded.score, max_marks=excluded.max_marks
-            """,
-            rows,
-        )
+        conn.executemany("INSERT INTO marks (term, exam, grade, stream, admission_no, subject, score, max_marks) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(term, exam, admission_no, subject) DO UPDATE SET grade=excluded.grade, stream=excluded.stream, score=excluded.score, max_marks=excluded.max_marks", rows)
         conn.commit()
 
 
@@ -148,12 +112,10 @@ def enrich_marks(data: pd.DataFrame, to_pct: bool) -> pd.DataFrame:
     if out.empty:
         out["display_score"] = []
         return out
-    mm = out["max_marks"].replace(0, 100.0)
-    out["pct"] = (out["score"] / mm) * 100.0
-    grades_info = out["pct"].apply(knec_grade)
-    out["knec_level"] = [g[0] for g in grades_info]
-    out["knec_pts"] = [g[1] for g in grades_info]
-    out["knec_label"] = out["knec_level"] + " (" + out["knec_pts"].astype(str) + "pt)"
+    out["pct"] = (out["score"] / out["max_marks"].replace(0, 100.0)) * 100.0
+    g_info = out["pct"].apply(knec_grade)
+    out["knec_level"] = [g[0] for g in g_info]
+    out["knec_pts"] = [g[1] for g in g_info]
     out["display_score"] = out["pct"] if to_pct else out["score"]
     return out
 
@@ -163,9 +125,7 @@ def recommend_pathway(avg_pct: float, sci_pct: float, pretech_pct: float, arts_h
         return "STEM — Technical & Engineering" if pretech_pct >= sci_pct + 5 else "STEM — Pure & Applied Sciences"
     if arts_hum_avg >= avg_pct and avg_pct >= 55:
         return "Social Sciences & Humanities"
-    if pretech_pct >= 60 or avg_pct >= 50:
-        return "Arts & Sports Science"
-    return "Foundation & Remedial Support"
+    return "Arts & Sports Science" if (pretech_pct >= 60 or avg_pct >= 50) else "Foundation & Remedial Support"
 
 
 def make_chart(data_obj, title: str, xlabel: str, xlim_max: Optional[float] = None, kind: str = "barh", figsize=(6.5, 3.8)) -> bytes:
@@ -188,11 +148,7 @@ def make_chart(data_obj, title: str, xlabel: str, xlim_max: Optional[float] = No
     return buf.getvalue()
 
 
-def generate_pdf(
-    student_name: str, admission_no: str, grade: str, stream: str,
-    term: str, exam_label: str, pathway: str, unit_label: str,
-    student_df: pd.DataFrame, chart_bytes: bytes,
-) -> bytes:
+def generate_pdf(student_name: str, admission_no: str, grade: str, stream: str, term: str, exam_label: str, pathway: str, unit_label: str, student_df: pd.DataFrame, chart_bytes: bytes) -> bytes:
     if not REPORTLAB_AVAILABLE or pdf_canvas is None or ImageReader is None:
         raise RuntimeError("Install reportlab (`pip install reportlab`) for PDF reports.")
     buf = io.BytesIO()
@@ -202,31 +158,22 @@ def generate_pdf(
     c.drawString(40, h - 50, "Rwang'ondu School — Academic & KNEC Level Report")
     c.setFont("Helvetica", 10)
     c.drawString(40, h - 70, f"Learner: {student_name} ({admission_no}) | {grade} {stream} | {term} ({exam_label})")
-
-    mean_val = float(student_df["display_score"].mean())
-    avg_pct = float(student_df["pct"].mean())
-    overall_lvl, overall_pts, _ = knec_grade(avg_pct)
+    lvl, pts, _ = knec_grade(float(student_df["pct"].mean()))
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(40, h - 90, f"Mean: {mean_val:.1f} {unit_label} | Indicative KNEC Band: {overall_lvl} ({overall_pts} pts)")
+    c.drawString(40, h - 90, f"Mean: {float(student_df['display_score'].mean()):.1f} {unit_label} | KNEC Band: {lvl} ({pts} pts)")
     if grade == "Grade 9":
         c.drawString(40, h - 106, f"Recommended Senior Pathway: {pathway}")
 
-    subj_df = student_df.groupby("subject", as_index=False)[["score", "max_marks", "display_score", "pct"]].mean()
     y = h - 134
     c.setFont("Helvetica-Bold", 9.5)
-    c.drawString(40, y, "Subject")
-    c.drawString(230, y, "Raw/Max")
-    c.drawString(310, y, f"Score ({unit_label})")
-    c.drawString(410, y, "KNEC Level")
+    for x_pos, col_txt in [(40, "Subject"), (230, "Raw/Max"), (310, f"Score ({unit_label})"), (410, "KNEC Level")]:
+        c.drawString(x_pos, y, col_txt)
     y -= 15
-
     c.setFont("Helvetica", 9)
-    for _, r in subj_df.iterrows():
-        lvl, pts, _ = knec_grade(float(r["pct"]))
-        c.drawString(40, y, str(r["subject"]))
-        c.drawString(230, y, f"{float(r['score']):.1f}/{float(r['max_marks']):.0f}")
-        c.drawString(310, y, f"{float(r['display_score']):.1f} {unit_label}")
-        c.drawString(410, y, f"{lvl} ({pts}pt)")
+    for _, r in student_df.groupby("subject", as_index=False)[["score", "max_marks", "display_score", "pct"]].mean().iterrows():
+        s_lvl, s_pts, _ = knec_grade(float(r["pct"]))
+        for x_pos, val_txt in [(40, str(r["subject"])), (230, f"{float(r['score']):.1f}/{float(r['max_marks']):.0f}"), (310, f"{float(r['display_score']):.1f} {unit_label}"), (410, f"{s_lvl} ({s_pts}pt)")]:
+            c.drawString(x_pos, y, val_txt)
         y -= 14
 
     chart_top = min(y - 10, 355)
@@ -249,8 +196,7 @@ def parse_bulk_marks(mdf: pd.DataFrame, lookup: dict, default_max: float) -> Lis
         if adm not in lookup:
             continue
         mm = float(r["max_marks"]) if "max_marks" in mdf.columns and pd.notna(r["max_marks"]) else default_max
-        g, s = str(lookup[adm]["grade"]), str(lookup[adm]["stream"])
-        t, ex = str(r["term"]).strip(), str(r["exam"]).strip()
+        g, s, t, ex = str(lookup[adm]["grade"]), str(lookup[adm]["stream"]), str(r["term"]).strip(), str(r["exam"]).strip()
         if has_long:
             rows.append((t, ex, g, s, adm, str(r["subject"]).strip(), float(r["score"]), mm))
         else:
@@ -261,50 +207,47 @@ def parse_bulk_marks(mdf: pd.DataFrame, lookup: dict, default_max: float) -> Lis
 
 
 def build_rankings(data: pd.DataFrame, unit_label: str) -> pd.DataFrame:
+    col_m = f"Mean ({unit_label})"
     if data.empty:
-        return pd.DataFrame(columns=["Rank", "Grade", "Stream", "Learners", f"Mean ({unit_label})", "KNEC Band"])
-    ranked = (
-        data.groupby(["grade", "stream"], as_index=False)
-        .agg(Learners=("admission_no", "nunique"), Mean_Val=("display_score", "mean"), Mean_Pct=("pct", "mean"))
-        .sort_values(by=["Mean_Val", "Learners"], ascending=[False, False])
-        .reset_index(drop=True)
-    )
+        return pd.DataFrame(columns=["Rank", "Grade", "Stream", "Learners", col_m, "KNEC Band"])
+    ranked = data.groupby(["grade", "stream"], as_index=False).agg(Learners=("admission_no", "nunique"), Mean_Val=("display_score", "mean"), Mean_Pct=("pct", "mean")).sort_values(by=["Mean_Val", "Learners"], ascending=[False, False]).reset_index(drop=True)
     ranked.insert(0, "Rank", [f"#{i + 1}" for i in range(len(ranked))])
-    ranked[f"Mean ({unit_label})"] = ranked["Mean_Val"].round(1)
+    ranked[col_m] = ranked["Mean_Val"].round(1)
     ranked["KNEC Band"] = [f"{knec_grade(p)[0]} ({knec_grade(p)[1]}pt)" for p in ranked["Mean_Pct"]]
-    return ranked[["Rank", "grade", "stream", "Learners", f"Mean ({unit_label})", "KNEC Band"]].rename(
-        columns={"grade": "Grade", "stream": "Stream"}
-    )
+    return ranked[["Rank", "grade", "stream", "Learners", col_m, "KNEC Band"]].rename(columns={"grade": "Grade", "stream": "Stream"})
 
 
 def build_results_table(data: pd.DataFrame, unit_label: str) -> pd.DataFrame:
     if data.empty:
         return pd.DataFrame()
-    piv = data.pivot_table(
-        index=["admission_no", "student_name", "grade", "stream", "term", "exam"],
-        columns="subject", values="display_score", aggfunc="mean",
-    ).reset_index()
+    idx_cols = ["admission_no", "student_name", "grade", "stream", "term", "exam"]
+    piv = data.pivot_table(index=idx_cols, columns="subject", values="display_score", aggfunc="mean").reset_index()
     present = [c for c in SUBJECTS if c in piv.columns]
     if present:
-        col_mean = f"Mean ({unit_label})"
-        piv[col_mean] = piv[present].mean(axis=1).round(1)
-        pts_map = data.groupby(["admission_no", "student_name", "grade", "stream", "term", "exam", "subject"])["knec_pts"].first().unstack("subject")
+        col_m = f"Mean ({unit_label})"
+        piv[col_m] = piv[present].mean(axis=1).round(1)
+        piv_idx = piv.set_index(idx_cols).index
+        pts_map = data.groupby(idx_cols + ["subject"])["knec_pts"].first().unstack("subject")
         pts_cols = [c for c in SUBJECTS if c in pts_map.columns]
         if pts_cols:
-            tot_pts = pts_map[pts_cols].sum(axis=1).reindex(piv.set_index(["admission_no", "student_name", "grade", "stream", "term", "exam"]).index).fillna(0).astype(int)
-            piv["Total KNEC Pts"] = tot_pts.values
-        avg_pct_s = data.groupby(["admission_no", "student_name", "grade", "stream", "term", "exam"])["pct"].mean().reindex(piv.set_index(["admission_no", "student_name", "grade", "stream", "term", "exam"]).index).fillna(0)
+            piv["Total KNEC Pts"] = pts_map[pts_cols].sum(axis=1).reindex(piv_idx).fillna(0).astype(int).values
+        avg_pct_s = data.groupby(idx_cols)["pct"].mean().reindex(piv_idx).fillna(0)
         piv["KNEC Level"] = [knec_grade(float(v))[0] for v in avg_pct_s.values]
-        piv["Class Pos"] = piv.groupby(["grade", "term", "exam"])[col_mean].rank(ascending=False, method="min").astype(int)
-        piv["Stream Pos"] = piv.groupby(["grade", "stream", "term", "exam"])[col_mean].rank(ascending=False, method="min").astype(int)
+        piv["Class Pos"] = piv.groupby(["grade", "term", "exam"])[col_m].rank(ascending=False, method="min").astype(int)
+        piv["Stream Pos"] = piv.groupby(["grade", "stream", "term", "exam"])[col_m].rank(ascending=False, method="min").astype(int)
         piv = piv.sort_values(by=["grade", "stream", "Class Pos"])
     return piv
+
+
+def read_file(up) -> pd.DataFrame:
+    return pd.read_csv(up) if up.name.lower().endswith(".csv") else pd.read_excel(up)
 
 
 init_db()
 st.session_state.setdefault("db_version", 0)
 students_df = load_students(st.session_state.db_version)
 raw_df = load_marks(st.session_state.db_version)
+logs_df = load_logs(st.session_state.db_version)
 
 st.title("Academic & Pathway Dashboard")
 st.caption("Rwang'ondu School — Grades 7–9 (Streams A, B, C) • 9 Subjects • KNEC Levels • Flexible Max Marks")
@@ -315,28 +258,26 @@ selected_grade = st.sidebar.selectbox("Grade", ["All grades"] + GRADES)
 selected_stream = st.sidebar.selectbox("Stream", ["All streams"] + STREAMS)
 convert_to_pct = st.sidebar.checkbox("Convert scores to percentage (%)", value=False)
 unit_label = "%" if convert_to_pct else "Marks"
-
 df = enrich_marks(raw_df, convert_to_pct)
+
 
 def apply_filters(frame: pd.DataFrame, include_stream: bool = True) -> pd.DataFrame:
     if frame.empty:
         return frame
     out = frame.copy()
-    if selected_term != "All terms": out = out[out["term"] == selected_term]
-    if selected_exam != "All exams": out = out[out["exam"] == selected_exam]
-    if selected_grade != "All grades": out = out[out["grade"] == selected_grade]
-    if include_stream and selected_stream != "All streams": out = out[out["stream"] == selected_stream]
+    for col, val in [("term", selected_term), ("exam", selected_exam), ("grade", selected_grade)] + ([("stream", selected_stream)] if include_stream else []):
+        if not val.startswith("All "):
+            out = out[out[col] == val]
     return out
 
-filtered = apply_filters(df, include_stream=True)
-grade_scope_df = apply_filters(df, include_stream=False)
 
+filtered = apply_filters(df, include_stream=True)
 k1, k2, k3 = st.columns(3)
 k1.metric(f"Mean Score ({unit_label})", f"{filtered['display_score'].mean():.1f}" if not filtered.empty else "0.0")
 k2.metric("Learners in Roster", int(students_df["admission_no"].nunique()))
 k3.metric("Top Subject", str(filtered.groupby("subject")["display_score"].mean().idxmax()) if not filtered.empty else "N/A")
 
-tab1, tab2, tab3, tab4 = st.tabs(["Dashboard, Rankings & Downloads", "Teacher Marks Entry", "Roster & Bulk Upload", "PDF Report & Messaging"])
+tab1, tab2, tab3, tab4 = st.tabs(["Dashboard, Rankings & Backend", "Teacher Marks Entry", "Roster & Bulk Upload", "PDF Report & Messaging"])
 
 with tab1:
     if filtered.empty:
@@ -352,29 +293,45 @@ with tab1:
         st.markdown("### Stream Performance Ranking")
         st.dataframe(build_rankings(filtered, unit_label), use_container_width=True)
 
-        whole_res = build_results_table(grade_scope_df, unit_label)
-        if not whole_res.empty:
-            st.markdown("### Results Table & Downloads (Whole Grade & Per Stream)")
-            st.dataframe(whole_res, use_container_width=True)
-            st.download_button("Download Whole Grade / Selection CSV", whole_res.to_csv(index=False).encode("utf-8"), "rwangondu_whole_grade_results.csv", "text/csv")
+        st.markdown("### Backend Block & Stream Downloads (e.g. Whole Grade 8 + 8A, 8B, 8C)")
+        default_block = selected_grade if selected_grade in GRADES else "Grade 8"
+        chosen_block = st.selectbox("Select Block / Grade for Backend Export", GRADES, index=GRADES.index(default_block))
+        block_base = df[df["grade"] == chosen_block]
+        if selected_term != "All terms":
+            block_base = block_base[block_base["term"] == selected_term]
+        if selected_exam != "All exams":
+            block_base = block_base[block_base["exam"] == selected_exam]
+
+        block_table = build_results_table(block_base, unit_label)
+        slug = chosen_block.lower().replace(" ", "_")
+        if not block_table.empty:
+            st.dataframe(block_table, use_container_width=True)
+            st.download_button(f"Download Whole {chosen_block} (CSV)", block_table.to_csv(index=False).encode("utf-8"), f"rwangondu_{slug}_whole.csv", "text/csv")
             s_cols = st.columns(len(STREAMS))
             zip_buf = io.BytesIO()
             with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.writestr("whole_grade_results.csv", whole_res.to_csv(index=False))
+                zf.writestr(f"{slug}_whole.csv", block_table.to_csv(index=False))
                 for idx, strm in enumerate(STREAMS):
-                    s_df = whole_res[whole_res["stream"] == strm] if "stream" in whole_res.columns else pd.DataFrame()
+                    s_df = block_table[block_table["stream"] == strm] if "stream" in block_table.columns else pd.DataFrame()
                     with s_cols[idx]:
-                        st.download_button(f"Stream {strm} CSV", s_df.to_csv(index=False).encode("utf-8"), f"rwangondu_stream_{strm}_results.csv", "text/csv", disabled=s_df.empty)
+                        st.download_button(f"Download {chosen_block} {strm} CSV", s_df.to_csv(index=False).encode("utf-8"), f"rwangondu_{slug}_{strm.lower()}.csv", "text/csv", disabled=s_df.empty)
                     if not s_df.empty:
-                        zf.writestr(f"stream_{strm}_results.csv", s_df.to_csv(index=False))
+                        zf.writestr(f"{slug}_{strm.lower()}.csv", s_df.to_csv(index=False))
             zip_buf.seek(0)
-            st.download_button("Download All Streams + Whole Grade (ZIP)", zip_buf.getvalue(), "rwangondu_grade_and_streams.zip", "application/zip")
+            st.download_button(f"Download {chosen_block} Whole + Streams A, B, C (ZIP)", zip_buf.getvalue(), f"rwangondu_{slug}_bundle.zip", "application/zip")
+        else:
+            st.info(f"No marks found for {chosen_block} under the current Term/Exam filter.")
 
-        with st.expander("Developer Export & Data Inspector"):
-            st.write({"db": DB_PATH, "roster_count": len(students_df), "filtered_rows": len(filtered), "pct_mode": convert_to_pct})
-            if not whole_res.empty:
-                st.download_button("Dev Dump: Whole Grade JSON", whole_res.to_json(orient="records", indent=2).encode("utf-8"), "dev_grade.json", "application/json")
-            st.dataframe(filtered, use_container_width=True)
+        with st.expander("Backend Upload History & Data Inspector"):
+            st.write({"db": DB_PATH, "roster_count": len(students_df), "marks_rows": len(raw_df), "upload_batches": len(logs_df)})
+            if not logs_df.empty:
+                st.dataframe(logs_df[["id", "uploaded_at", "upload_type", "source_name", "rows_imported"]], use_container_width=True)
+                sel_row = logs_df[logs_df["id"] == st.selectbox("Inspect Uploaded Batch Rows", logs_df["id"].tolist())].iloc[0]
+                st.dataframe(pd.read_json(io.StringIO(str(sel_row["preview_json"]))), use_container_width=True)
+            else:
+                st.info("No uploads logged yet.")
+            if not block_table.empty:
+                st.download_button(f"Dev Dump: {chosen_block} JSON", block_table.to_json(orient="records", indent=2).encode("utf-8"), f"dev_{slug}.json", "application/json")
 
         st.markdown("### Grade 9 Recommended Pathways")
         g9_df = filtered[filtered["grade"] == "Grade 9"]
@@ -382,11 +339,10 @@ with tab1:
         for (adm, sname, stream_val, term_val, exam_val), sdf in g9_df.groupby(["admission_no", "student_name", "stream", "term", "exam"]):
             pm = sdf.groupby("subject")["pct"].mean().to_dict()
             avg_p = float(sdf["pct"].mean())
-            hum_p = float(pd.Series([v for k, v in pm.items() if k in ("English", "Kiswahili", "Social Studies", "Creative Arts & Sports", "Religious Education")]).mean())
+            hum_p = float(pd.Series([v for k, v in pm.items() if k in HUM_ARTS_SUBJS]).mean())
             p_rows.append({
                 "Term": term_val, "Exam": exam_val, "Admission No.": adm, "Learner": sname, "Stream": stream_val,
-                f"Mean ({unit_label})": round(float(sdf["display_score"].mean()), 1),
-                "KNEC Level": knec_grade(avg_p)[0],
+                f"Mean ({unit_label})": round(float(sdf["display_score"].mean()), 1), "KNEC Level": knec_grade(avg_p)[0],
                 "Suggested Pathway": recommend_pathway(avg_p, float(pm.get("Integrated Science", avg_p)), float(pm.get("Pre-Technical Studies", avg_p)), hum_p if pd.notna(hum_p) else avg_p),
             })
         if p_rows:
@@ -399,10 +355,8 @@ with tab1:
 with tab2:
     st.subheader("Direct Mark Entry")
     e1, e2, e3, e4, e5 = st.columns(5)
-    entry_term = e1.selectbox("Term", TERMS, key="e_term")
-    entry_exam = e2.selectbox("Exam", EXAMS, key="e_exam")
-    entry_grade = e3.selectbox("Grade", GRADES, key="e_grade")
-    entry_stream = e4.selectbox("Stream", STREAMS, key="e_stream")
+    entry_term, entry_exam = e1.selectbox("Term", TERMS, key="e_term"), e2.selectbox("Exam", EXAMS, key="e_exam")
+    entry_grade, entry_stream = e3.selectbox("Grade", GRADES, key="e_grade"), e4.selectbox("Stream", STREAMS, key="e_stream")
     max_marks_val = float(e5.number_input("Max Marks (Out Of)", 1.0, 500.0, 100.0, 5.0, key="e_max"))
     class_roster = students_df[(students_df["grade"] == entry_grade) & (students_df["stream"] == entry_stream)]
     if class_roster.empty:
@@ -418,7 +372,9 @@ with tab2:
                 with cols[i % 3]:
                     marks_in[subj] = float(st.number_input(f"{subj} (/{max_marks_val:.0f})", 0.0, max_marks_val, 0.0, 1.0, key=f"m_{subj}"))
             if st.form_submit_button("Save Exam Marks"):
-                upsert_marks([(entry_term, entry_exam, str(chosen_s["grade"]), str(chosen_s["stream"]), str(chosen_s["admission_no"]), subj, sc, max_marks_val) for subj, sc in marks_in.items()])
+                m_rows = [(entry_term, entry_exam, str(chosen_s["grade"]), str(chosen_s["stream"]), str(chosen_s["admission_no"]), subj, sc, max_marks_val) for subj, sc in marks_in.items()]
+                upsert_marks(m_rows)
+                log_upload("Single Marks Entry", f"{chosen_s['admission_no']} ({entry_exam})", len(m_rows), pd.DataFrame(m_rows, columns=["term", "exam", "grade", "stream", "admission_no", "subject", "score", "max_marks"]))
                 st.session_state.db_version += 1
                 st.success(f"Saved {entry_exam} marks for {chosen_s['student_name']}.")
                 st.rerun()
@@ -433,7 +389,9 @@ with tab3:
         n_wa = a5.text_input("Parent WhatsApp", placeholder="+2547XXXXXXXX")
         if st.form_submit_button("Save Learner"):
             if n_adm.strip() and n_name.strip() and n_wa.strip():
-                upsert_students([(n_adm.strip(), n_name.strip(), n_g, n_s, n_wa.strip())])
+                s_row = [(n_adm.strip(), n_name.strip(), n_g, n_s, n_wa.strip())]
+                upsert_students(s_row)
+                log_upload("Single Learner", n_adm.strip(), 1, pd.DataFrame(s_row, columns=["admission_no", "student_name", "grade", "stream", "parent_whatsapp"]))
                 st.session_state.db_version += 1
                 st.success("Learner saved.")
                 st.rerun()
@@ -444,12 +402,14 @@ with tab3:
     st.download_button("Download Roster Template", r_tpl.to_csv(index=False).encode("utf-8"), "roster_template.csv", "text/csv")
     r_up = st.file_uploader("Upload Roster (.csv or .xlsx)", type=["csv", "xlsx"], key="r_up")
     if r_up and st.button("Import Roster"):
-        up_df = pd.read_csv(r_up) if r_up.name.lower().endswith(".csv") else pd.read_excel(r_up)
+        up_df = read_file(r_up)
         req = {"admission_no", "student_name", "grade", "stream", "parent_whatsapp"}
         if req.issubset(up_df.columns):
-            upsert_students([(str(r["admission_no"]).strip(), str(r["student_name"]).strip(), str(r["grade"]).strip(), str(r["stream"]).strip(), str(r["parent_whatsapp"]).strip()) for _, r in up_df.iterrows()])
+            s_rows = [(str(r["admission_no"]).strip(), str(r["student_name"]).strip(), str(r["grade"]).strip(), str(r["stream"]).strip(), str(r["parent_whatsapp"]).strip()) for _, r in up_df.iterrows()]
+            upsert_students(s_rows)
+            log_upload("Bulk Roster", r_up.name, len(s_rows), up_df)
             st.session_state.db_version += 1
-            st.success(f"Imported {len(up_df)} learners.")
+            st.success(f"Imported {len(s_rows)} learners.")
             st.rerun()
         else:
             st.error(f"Missing columns: {sorted(req)}")
@@ -460,11 +420,11 @@ with tab3:
     m_up = st.file_uploader("Upload Marks (.csv or .xlsx)", type=["csv", "xlsx"], key="m_up")
     if m_up and st.button("Import Marks"):
         try:
-            mdf = pd.read_csv(m_up) if m_up.name.lower().endswith(".csv") else pd.read_excel(m_up)
-            lookup = students_df.set_index("admission_no")[["grade", "stream"]].to_dict("index")
-            parsed = parse_bulk_marks(mdf, lookup, def_max)
+            mdf = read_file(m_up)
+            parsed = parse_bulk_marks(mdf, students_df.set_index("admission_no")[["grade", "stream"]].to_dict("index"), def_max)
             if parsed:
                 upsert_marks(parsed)
+                log_upload("Bulk Marks", m_up.name, len(parsed), mdf)
                 st.session_state.db_version += 1
                 st.success(f"Imported {len(parsed)} mark rows.")
                 st.rerun()
@@ -490,7 +450,7 @@ with tab4:
 
         pm = sdf.groupby("subject")["pct"].mean().to_dict()
         avg_p = float(sdf["pct"].mean())
-        hum_p = float(pd.Series([v for k, v in pm.items() if k in ("English", "Kiswahili", "Social Studies", "Creative Arts & Sports", "Religious Education")]).mean())
+        hum_p = float(pd.Series([v for k, v in pm.items() if k in HUM_ARTS_SUBJS]).mean())
         pathway = recommend_pathway(avg_p, float(pm.get("Integrated Science", avg_p)), float(pm.get("Pre-Technical Studies", avg_p)), hum_p if pd.notna(hum_p) else avg_p)
         lvl_str, pts_val, _ = knec_grade(avg_p)
 
