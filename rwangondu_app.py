@@ -206,15 +206,21 @@ def parse_bulk_marks(mdf: pd.DataFrame, lookup: dict, default_max: float) -> Lis
     return rows
 
 
+# >>> PER-CLASS STREAM RANKING FUNCTION (ranks streams A/B/C within each grade by mean score)
 def build_rankings(data: pd.DataFrame, unit_label: str) -> pd.DataFrame:
     col_m = f"Mean ({unit_label})"
     if data.empty:
-        return pd.DataFrame(columns=["Rank", "Grade", "Stream", "Learners", col_m, "KNEC Band"])
-    ranked = data.groupby(["grade", "stream"], as_index=False).agg(Learners=("admission_no", "nunique"), Mean_Val=("display_score", "mean"), Mean_Pct=("pct", "mean")).sort_values(by=["Mean_Val", "Learners"], ascending=[False, False]).reset_index(drop=True)
-    ranked.insert(0, "Rank", [f"#{i + 1}" for i in range(len(ranked))])
+        return pd.DataFrame(columns=["Class Rank", "Grade", "Stream", "Learners", col_m, "KNEC Band"])
+    ranked = (
+        data.groupby(["grade", "stream"], as_index=False)
+        .agg(Learners=("admission_no", "nunique"), Mean_Val=("display_score", "mean"), Mean_Pct=("pct", "mean"))
+    )
+    ranked["rank_num"] = ranked.groupby("grade")["Mean_Val"].rank(ascending=False, method="min").astype(int)
+    ranked = ranked.sort_values(by=["grade", "rank_num", "Mean_Val"], ascending=[True, True, False]).reset_index(drop=True)
+    ranked["Class Rank"] = "#" + ranked["rank_num"].astype(str)
     ranked[col_m] = ranked["Mean_Val"].round(1)
     ranked["KNEC Band"] = [f"{knec_grade(p)[0]} ({knec_grade(p)[1]}pt)" for p in ranked["Mean_Pct"]]
-    return ranked[["Rank", "grade", "stream", "Learners", col_m, "KNEC Band"]].rename(columns={"grade": "Grade", "stream": "Stream"})
+    return ranked[["Class Rank", "grade", "stream", "Learners", col_m, "KNEC Band"]].rename(columns={"grade": "Grade", "stream": "Stream"})
 
 
 def build_results_table(data: pd.DataFrame, unit_label: str) -> pd.DataFrame:
@@ -292,7 +298,9 @@ with tab1:
         c1.image(make_chart(gs_piv, f"Mean ({unit_label}) by Grade & Stream", f"Mean ({unit_label})", xlim_val, "bar_pivot"))
         c2.image(make_chart(filtered.groupby("subject")["display_score"].mean().sort_values(), f"Subject Performance ({unit_label})", f"Mean ({unit_label})", xlim_val, "barh"))
 
-        st.markdown("### Stream Performance Ranking")
+        # >>> PER-CLASS STREAM RANKING TABLE
+        st.markdown("### Stream Performance Ranking (Per Class)")
+        st.caption("Each class (Grade) ranks its streams (#1 downward) by stream mean score.")
         st.dataframe(build_rankings(filtered, unit_label), use_container_width=True)
 
         st.markdown("### Whole-Grade Ranking (Best to Worst) & Stream Downloads")
